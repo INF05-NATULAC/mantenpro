@@ -9,7 +9,7 @@
 
 window.DataService = (() => {
   // ─── Backend adapter (swap to switch backends) ───────────────────────
-  const BACKEND = 'localStorage'; // 'localStorage' | 'googleSheets' | 'rest' | 'firestore'
+  const BACKEND = 'googleSheets'; // 'localStorage' | 'googleSheets' | 'rest' | 'firestore'
   
   // ─── Seed Data ───────────────────────────────────────────────────────
   const SEED = {
@@ -231,7 +231,7 @@ window.DataService = (() => {
  */
 window.SheetsService = (() => {
   const CONFIG = {
-    scriptUrl: 'YOUR_GOOGLE_APPS_SCRIPT_URL_HERE',
+    scriptUrl: 'https://script.google.com/macros/s/AKfycbxhvox370Cr6mrTJifsmKIhcftLaKhOtGx9x8MQ4cAvxPLB4rpHYUPmgavEqYU2l-xRww/exec',
     // Get this from: Extensions > Apps Script > Deploy > Web App
   };
 
