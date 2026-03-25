@@ -1,15 +1,20 @@
 {
   "name": "MaintControl - Gestión de Paradas",
   "short_name": "MaintControl",
-  "description": "Sistema de gestión de paradas de máquinas para mantenimiento industrial",
+  "description": "Sistema PWA de gestión de paradas de máquinas para mantenimiento industrial",
   "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
-  "background_color": "#0a0f1e",
-  "theme_color": "#00d4ff",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "background_color": "#04090f",
+  "theme_color": "#00c8f0",
   "orientation": "any",
+  "lang": "es",
+  "dir": "ltr",
+  "categories": ["productivity", "utilities", "business"],
   "icons": [
-    { "src": "icons/icon-72.png", "sizes": "72x72", "type": "image/png" },
-    { "src": "icons/icon-96.png", "sizes": "96x96", "type": "image/png" },
+    { "src": "icons/icon-72.png",  "sizes": "72x72",   "type": "image/png" },
+    { "src": "icons/icon-96.png",  "sizes": "96x96",   "type": "image/png" },
     { "src": "icons/icon-128.png", "sizes": "128x128", "type": "image/png" },
     { "src": "icons/icon-144.png", "sizes": "144x144", "type": "image/png" },
     { "src": "icons/icon-152.png", "sizes": "152x152", "type": "image/png" },
@@ -17,21 +22,36 @@
     { "src": "icons/icon-384.png", "sizes": "384x384", "type": "image/png" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ],
-  "categories": ["productivity", "utilities"],
   "shortcuts": [
     {
       "name": "Nueva Parada",
       "short_name": "Nueva",
       "description": "Registrar nueva parada de máquina",
-      "url": "./index.html#/nueva-parada",
+      "url": "./index.html#stopages",
       "icons": [{ "src": "icons/icon-96.png", "sizes": "96x96" }]
     },
     {
       "name": "Dashboard",
       "short_name": "Dashboard",
       "description": "Ver indicadores en tiempo real",
-      "url": "./index.html#/dashboard",
+      "url": "./index.html#dashboard",
       "icons": [{ "src": "icons/icon-96.png", "sizes": "96x96" }]
+    },
+    {
+      "name": "Tablero Kanban",
+      "short_name": "Kanban",
+      "description": "Vista de tablero de paradas activas",
+      "url": "./index.html#kanban",
+      "icons": [{ "src": "icons/icon-96.png", "sizes": "96x96" }]
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Dashboard MaintControl"
     }
   ]
 }

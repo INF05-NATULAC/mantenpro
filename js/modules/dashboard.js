@@ -13,7 +13,7 @@ window.DashboardModule = (() => {
       <div class="module-header">
         <h2><span class="icon">📊</span> Dashboard en Tiempo Real</h2>
         <div class="header-actions">
-          <span class="online-badge" id="onlineBadge"></span>
+          <span id="dashConnBadge" style="font-size:12px;color:var(--text-3)"></span>
           <button class="btn btn-sm btn-ghost" onclick="DashboardModule.refresh()">↻ Actualizar</button>
           <select id="dashPeriod" class="input-sm" onchange="DashboardModule.refresh()">
             <option value="7">Últimos 7 días</option>
@@ -133,7 +133,7 @@ window.DashboardModule = (() => {
       charts.chartTimeline = new Chart(tlEl, {
         type: 'line',
         data: {
-          labels: stats.timeSeries.map(d => new Date(d.date).toLocaleDateString('es-MX', {weekday:'short', day:'numeric'})),
+          labels: stats.timeSeries.map(d => new Date(d.date + 'T12:00').toLocaleDateString('es-MX', {weekday:'short', day:'numeric', month:'short'})),
           datasets: [
             {
               label: 'Paradas',
@@ -234,30 +234,32 @@ window.DashboardModule = (() => {
   function renderRecentStopages(stopages) {
     const el = document.getElementById('recentStopages');
     if (!el) return;
-    if (!stopages.length) { el.innerHTML = '<p style="color:#64748b;text-align:center;padding:20px">No hay paradas registradas</p>'; return; }
+    if (!stopages.length) {
+      el.innerHTML = '<p style="color:var(--text-3);text-align:center;padding:24px">No hay paradas registradas</p>';
+      return;
+    }
 
     el.innerHTML = stopages.map(s => {
-      const machine = DataService.getById('machines', s.machineId);
-      const area = DataService.getById('areas', s.areaId);
-      const reason = DataService.getById('stopReasons', s.reasonId);
-      const responsible = DataService.getById('users', s.responsibleId);
-      const statusInfo = { pendiente: ['🔴','#ef4444'], en_proceso: ['🟡','#f59e0b'], finalizado: ['🟢','#10b981'] }[s.status];
-      const dur = s.duration ? `${Math.floor(s.duration/60)}h ${s.duration%60}m` : 'En curso';
+      const machine     = DataService.getById('machines',   s.machineId);
+      const area        = DataService.getById('areas',      s.areaId);
+      const reason      = DataService.getById('stopReasons',s.reasonId);
+      const responsible = DataService.getById('users',      s.responsibleId);
+      const sc = { pendiente:'🔴', en_proceso:'🟡', finalizado:'🟢' }[s.status] || '⚪';
+      const color = { pendiente:'var(--red)', en_proceso:'var(--yellow)', finalizado:'var(--green)' }[s.status] || '#fff';
+      const dur = s.duration != null ? `${Math.floor(s.duration/60)}h ${s.duration%60}m` : 'En curso ⏳';
 
       return `
         <div class="stopage-row" onclick="App.navigate('stopages','edit:${s.id}')">
-          <div class="stopage-status" style="color:${statusInfo[1]}">${statusInfo[0]}</div>
+          <div style="font-size:17px;flex-shrink:0">${sc}</div>
           <div class="stopage-info">
             <strong>${machine?.name || '—'}</strong>
-            <span>${area?.name || '—'} · ${reason?.name || '—'}</span>
+            <span>${area?.name || '—'} · ${reason?.name || '—'} · ${responsible?.name || '—'}</span>
           </div>
-          <div class="stopage-meta">
-            <span>${new Date(s.startAt).toLocaleString('es-MX',{dateStyle:'short',timeStyle:'short'})}</span>
-            <span class="duration">${dur}</span>
+          <div style="text-align:right;flex-shrink:0">
+            <div style="font-family:var(--font-display);font-size:11.5px;color:${color}">${dur}</div>
+            <div style="font-size:10px;color:var(--text-3)">${new Date(s.startAt).toLocaleString('es-MX',{dateStyle:'short',timeStyle:'short'})}</div>
           </div>
-          <div class="stopage-responsible">${responsible?.name || '—'}</div>
-        </div>
-      `;
+        </div>`;
     }).join('');
   }
 
@@ -284,10 +286,11 @@ window.DashboardModule = (() => {
   }
 
   function updateOnlineBadge() {
-    const el = document.getElementById('onlineBadge');
+    const el = document.getElementById('dashConnBadge');
     if (!el) return;
-    const online = navigator.onLine;
-    el.innerHTML = `<span class="badge ${online ? 'badge-online' : 'badge-offline'}">${online ? '● Online' : '○ Offline'}</span>`;
+    el.innerHTML = navigator.onLine
+      ? `<span class="dot-online" style="display:inline-block"></span> Online`
+      : `<span class="dot-offline" style="display:inline-block"></span> Offline`;
   }
 
   function startAutoRefresh() {

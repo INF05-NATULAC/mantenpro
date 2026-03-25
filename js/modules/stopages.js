@@ -1,33 +1,40 @@
 /**
- * MaintControl - Stopages Module
- * Full CRUD for machine stop records.
+ * MaintControl — Stopages Module
+ * CRUD completo para registros de paradas de máquinas.
+ * Filtros avanzados · Exportación Excel/PDF · Modal de edición
  */
 
 window.StopagesModule = (() => {
   let currentFilters = {};
-  let editingId = null;
+  let editingId      = null;
 
+  // ─── Render ──────────────────────────────────────────────────────────
   function render(container, param) {
+    const canCreate = AuthService.can('createStopage');
+    const canExport = AuthService.can('exportReports');
+
     container.innerHTML = `
       <div class="module-header">
         <h2><span class="icon">🛑</span> Registro de Paradas</h2>
         <div class="header-actions">
-          ${AuthService.can('createStopage') ? `<button class="btn btn-primary" onclick="StopagesModule.openForm()">+ Nueva Parada</button>` : ''}
-          ${AuthService.can('exportReports') ? `
+          ${canCreate ? `<button class="btn btn-primary" onclick="StopagesModule.openForm()">＋ Nueva Parada</button>` : ''}
+          ${canExport ? `
             <button class="btn btn-ghost btn-sm" onclick="StopagesModule.exportExcel()">📊 Excel</button>
             <button class="btn btn-ghost btn-sm" onclick="StopagesModule.exportPDF()">📄 PDF</button>
           ` : ''}
         </div>
       </div>
 
-      <!-- Filters -->
-      <div class="filter-bar" id="filterBar">
+      <!-- Filtros -->
+      <div class="filter-bar">
         <div class="filter-row">
           <select id="fArea" class="input-sm" onchange="StopagesModule.onAreaChange()">
             <option value="">Todas las áreas</option>
-            ${renderAreaOptions()}
+            ${DataService.getAll('areas')
+              .filter(a => AuthService.canAccessArea(a.id))
+              .map(a => `<option value="${a.id}">${a.name}</option>`).join('')}
           </select>
-          <select id="fSubarea" class="input-sm" onchange="StopagesModule.applyFilters()">
+          <select id="fSubarea" class="input-sm" onchange="StopagesModule.onSubareaChange()">
             <option value="">Todas las subáreas</option>
           </select>
           <select id="fMachine" class="input-sm" onchange="StopagesModule.applyFilters()">
@@ -35,28 +42,30 @@ window.StopagesModule = (() => {
           </select>
           <select id="fStatus" class="input-sm" onchange="StopagesModule.applyFilters()">
             <option value="">Todos los estados</option>
-            <option value="pendiente">Pendiente</option>
-            <option value="en_proceso">En Proceso</option>
-            <option value="finalizado">Finalizado</option>
+            <option value="pendiente">🔴 Pendiente</option>
+            <option value="en_proceso">🟡 En Proceso</option>
+            <option value="finalizado">🟢 Finalizado</option>
+          </select>
+          <select id="fReason" class="input-sm" onchange="StopagesModule.applyFilters()">
+            <option value="">Todos los motivos</option>
+            ${DataService.getAll('stopReasons').map(r =>
+              `<option value="${r.id}">${r.name}</option>`
+            ).join('')}
           </select>
         </div>
         <div class="filter-row">
-          <input type="date" id="fDateFrom" class="input-sm" onchange="StopagesModule.applyFilters()" placeholder="Desde">
-          <input type="date" id="fDateTo" class="input-sm" onchange="StopagesModule.applyFilters()" placeholder="Hasta">
-          <select id="fReason" class="input-sm" onchange="StopagesModule.applyFilters()">
-            <option value="">Todos los motivos</option>
-            ${DataService.getAll('stopReasons').map(r => `<option value="${r.id}">${r.name}</option>`).join('')}
-          </select>
-          <button class="btn btn-sm btn-ghost" onclick="StopagesModule.clearFilters()">✕ Limpiar</button>
+          <label style="font-size:12px;color:var(--text-3);white-space:nowrap">Desde</label>
+          <input type="date" id="fDateFrom" class="input-sm" onchange="StopagesModule.applyFilters()">
+          <label style="font-size:12px;color:var(--text-3);white-space:nowrap">Hasta</label>
+          <input type="date" id="fDateTo"   class="input-sm" onchange="StopagesModule.applyFilters()">
+          <button class="btn btn-sm btn-ghost" onclick="StopagesModule.clearFilters()">✕ Limpiar filtros</button>
+          <span id="resultsCount" style="font-size:12px;color:var(--text-3);margin-left:4px"></span>
         </div>
       </div>
 
-      <!-- Results count -->
-      <div style="color:#64748b;font-size:13px;margin:8px 0" id="resultsCount"></div>
-
-      <!-- Table -->
+      <!-- Tabla -->
       <div class="table-container">
-        <table class="data-table" id="stopagesTable">
+        <table class="data-table">
           <thead>
             <tr>
               <th>Estado</th>
@@ -74,7 +83,7 @@ window.StopagesModule = (() => {
         </table>
       </div>
 
-      <!-- Form Modal -->
+      <!-- Modal de parada -->
       <div class="modal-overlay" id="stopageModal" style="display:none">
         <div class="modal-card">
           <div class="modal-header">
@@ -88,250 +97,275 @@ window.StopagesModule = (() => {
 
     applyFilters();
 
-    // Handle param (e.g., 'edit:st1')
-    if (param && param.startsWith('edit:')) {
-      const id = param.split(':')[1];
-      setTimeout(() => openForm(id), 100);
+    // Deep-link: openForm if param = "edit:ID"
+    if (param?.startsWith('edit:')) {
+      setTimeout(() => openForm(param.slice(5)), 120);
     }
   }
 
-  function renderAreaOptions() {
-    return DataService.getAll('areas')
-      .filter(a => AuthService.canAccessArea(a.id))
-      .map(a => `<option value="${a.id}">${a.name}</option>`).join('');
+  // ─── Filtros ──────────────────────────────────────────────────────────
+  function onAreaChange() {
+    const areaId = _val('fArea');
+    _populateSelect('fSubarea',
+      DataService.getAll('subareas').filter(s => !areaId || s.areaId === areaId),
+      'Todas las subáreas'
+    );
+    _populateSelect('fMachine', [], 'Todas las máquinas');
+    applyFilters();
   }
 
-  function onAreaChange() {
-    const areaId = document.getElementById('fArea')?.value;
-    const subSel = document.getElementById('fSubarea');
-    if (!subSel) return;
-    const subs = DataService.getAll('subareas').filter(s => !areaId || s.areaId === areaId);
-    subSel.innerHTML = '<option value="">Todas las subáreas</option>' +
-      subs.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
-
-    // Reset machine
-    const machSel = document.getElementById('fMachine');
-    if (machSel) machSel.innerHTML = '<option value="">Todas las máquinas</option>';
+  function onSubareaChange() {
+    const subId = _val('fSubarea');
+    _populateSelect('fMachine',
+      DataService.getAll('machines').filter(m => !subId || m.subareaId === subId),
+      'Todas las máquinas'
+    );
     applyFilters();
   }
 
   function applyFilters() {
-    currentFilters = {
-      areaId: document.getElementById('fArea')?.value || '',
-      subareaId: document.getElementById('fSubarea')?.value || '',
-      machineId: document.getElementById('fMachine')?.value || '',
-      status: document.getElementById('fStatus')?.value || '',
-      dateFrom: document.getElementById('fDateFrom')?.value || '',
-      dateTo: document.getElementById('fDateTo')?.value || '',
-      reasonId: document.getElementById('fReason')?.value || '',
+    const f = {
+      areaId:    _val('fArea'),
+      subareaId: _val('fSubarea'),
+      machineId: _val('fMachine'),
+      status:    _val('fStatus'),
+      reasonId:  _val('fReason'),
+      dateFrom:  _val('fDateFrom'),
+      dateTo:    _val('fDateTo'),
     };
-    Object.keys(currentFilters).forEach(k => { if (!currentFilters[k]) delete currentFilters[k]; });
-    renderTable(DataService.getStopages(currentFilters));
+    // Remove empty keys
+    Object.keys(f).forEach(k => { if (!f[k]) delete f[k]; });
+    currentFilters = f;
+    renderTable(DataService.getStopages(f));
   }
 
   function clearFilters() {
-    ['fArea','fSubarea','fMachine','fStatus','fDateFrom','fDateTo','fReason'].forEach(id => {
+    ['fArea','fSubarea','fMachine','fStatus','fReason','fDateFrom','fDateTo'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.value = '';
     });
     currentFilters = {};
-    renderTable(DataService.getStopages());
+    onAreaChange();   // repopulate cascades
   }
 
-  function renderTable(stopages) {
-    const body = document.getElementById('stopagesBody');
+  // ─── Table ────────────────────────────────────────────────────────────
+  function renderTable(rows) {
+    const body  = document.getElementById('stopagesBody');
     const count = document.getElementById('resultsCount');
     if (!body) return;
-    if (count) count.textContent = `${stopages.length} resultado${stopages.length !== 1 ? 's' : ''}`;
 
-    if (!stopages.length) {
-      body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:#64748b;padding:40px">No hay paradas registradas</td></tr>`;
+    if (count) count.textContent = `${rows.length} resultado${rows.length !== 1 ? 's' : ''}`;
+
+    if (!rows.length) {
+      body.innerHTML = `<tr><td colspan="9" class="empty-cell">No hay paradas con los filtros seleccionados</td></tr>`;
       return;
     }
 
-    const statusBadge = {
-      pendiente: '<span class="badge badge-red">Pendiente</span>',
-      en_proceso: '<span class="badge badge-yellow">En Proceso</span>',
-      finalizado: '<span class="badge badge-green">Finalizado</span>'
+    const STATUS = {
+      pendiente:  { icon:'🔴', cls:'badge-red',    label:'Pendiente'  },
+      en_proceso: { icon:'🟡', cls:'badge-yellow', label:'En Proceso' },
+      finalizado: { icon:'🟢', cls:'badge-green',  label:'Finalizado' },
     };
 
-    body.innerHTML = stopages.map(s => {
-      const machine = DataService.getById('machines', s.machineId);
-      const area = DataService.getById('areas', s.areaId);
-      const subarea = DataService.getById('subareas', s.subareaId);
-      const reason = DataService.getById('stopReasons', s.reasonId);
-      const responsible = DataService.getById('users', s.responsibleId);
-      const dur = s.duration != null ? `${Math.floor(s.duration/60)}h ${s.duration%60}m` : s.status === 'finalizado' ? '—' : `<span class="live-dur" data-start="${s.startAt}">…</span>`;
+    body.innerHTML = rows.map(s => {
+      const machine  = DataService.getById('machines',    s.machineId);
+      const area     = DataService.getById('areas',       s.areaId);
+      const subarea  = DataService.getById('subareas',    s.subareaId);
+      const reason   = DataService.getById('stopReasons', s.reasonId);
+      const user     = DataService.getById('users',       s.responsibleId);
+      const st       = STATUS[s.status] || { icon:'⚪', cls:'', label: s.status };
+
+      const durCell = s.duration != null
+        ? `${Math.floor(s.duration/60)}h ${s.duration%60}m`
+        : s.status === 'finalizado'
+          ? '—'
+          : `<span class="live-dur" data-start="${s.startAt}">…</span>`;
+
       const canEdit = AuthService.can('editStopage');
-      const canDel = AuthService.can('deleteStopage');
+      const canDel  = AuthService.can('deleteStopage');
 
-      return `
-        <tr class="${s.status === 'en_proceso' ? 'row-active' : ''}">
-          <td>${statusBadge[s.status] || s.status}</td>
-          <td><strong>${machine?.name || '—'}</strong><br><small>${machine?.code || ''}</small></td>
-          <td>${area?.name || '—'}<br><small>${subarea?.name || '—'}</small></td>
-          <td>${reason?.name || '—'}<br><small style="color:#64748b">${s.reasonFree || ''}</small></td>
-          <td>${s.startAt ? new Date(s.startAt).toLocaleString('es-MX',{dateStyle:'short',timeStyle:'short'}) : '—'}</td>
-          <td>${s.endAt ? new Date(s.endAt).toLocaleString('es-MX',{dateStyle:'short',timeStyle:'short'}) : '—'}</td>
-          <td class="mono">${dur}</td>
-          <td>${responsible?.name || '—'}</td>
-          <td class="actions">
-            ${canEdit ? `<button class="btn-icon" onclick="StopagesModule.openForm('${s.id}')" title="Editar">✏️</button>` : ''}
-            ${canDel ? `<button class="btn-icon btn-icon-danger" onclick="StopagesModule.deleteStopage('${s.id}')" title="Eliminar">🗑️</button>` : ''}
-          </td>
-        </tr>
-      `;
+      return `<tr class="${s.status==='en_proceso'?'row-active':''}">
+        <td><span class="badge ${st.cls}">${st.icon} ${st.label}</span></td>
+        <td>
+          <strong>${machine?.name || '—'}</strong>
+          <small>${machine?.code || ''}</small>
+        </td>
+        <td>
+          ${area?.name || '—'}
+          <small>${subarea?.name || '—'}</small>
+        </td>
+        <td>
+          ${reason?.name || '—'}
+          ${s.reasonFree ? `<small style="color:var(--text-3)">${s.reasonFree}</small>` : ''}
+        </td>
+        <td>${s.startAt ? _fmtDT(s.startAt) : '—'}</td>
+        <td>${s.endAt   ? _fmtDT(s.endAt)   : '—'}</td>
+        <td class="mono">${durCell}</td>
+        <td>${user?.name || '—'}</td>
+        <td class="actions">
+          ${canEdit ? `<button class="btn-icon" onclick="StopagesModule.openForm('${s.id}')" title="Editar">✏️</button>` : ''}
+          ${canDel  ? `<button class="btn-icon btn-icon-danger" onclick="StopagesModule.deleteStopage('${s.id}')" title="Eliminar">🗑️</button>` : ''}
+        </td>
+      </tr>`;
     }).join('');
-
-    // Update live durations
-    updateLiveDurations();
   }
 
-  function updateLiveDurations() {
-    document.querySelectorAll('.live-dur').forEach(el => {
-      const start = new Date(el.dataset.start);
-      const elapsed = Math.round((new Date() - start) / 60000);
-      el.textContent = `${Math.floor(elapsed/60)}h ${elapsed%60}m ⏳`;
-    });
-  }
-
+  // ─── Form modal ───────────────────────────────────────────────────────
   function openForm(id = null) {
     editingId = id;
     const modal = document.getElementById('stopageModal');
     const title = document.getElementById('modalTitle');
-    const body = document.getElementById('modalBody');
-    if (!modal) return;
+    const body  = document.getElementById('modalBody');
+    if (!modal || !title || !body) return;
 
     const stopage = id ? DataService.getById('stopages', id) : null;
-    const user = AuthService.getUser();
-    const canEditTime = AuthService.can('editStartEndTime');
+    const authUser   = AuthService.getUser();
+    const canTime    = AuthService.can('editStartEndTime');
+    const canStatus  = AuthService.can('changeStatus');
 
-    // Build area/subarea/machine options
-    const areas = DataService.getAll('areas').filter(a => AuthService.canAccessArea(a.id));
-    const selAreaId = stopage?.areaId || (areas[0]?.id || '');
-    const subareas = DataService.getAll('subareas').filter(s => s.areaId === selAreaId);
-    const selSubId = stopage?.subareaId || (subareas[0]?.id || '');
-    const machines = DataService.getAll('machines').filter(m => m.subareaId === selSubId);
-    const reasons = DataService.getAll('stopReasons');
+    const areas    = DataService.getAll('areas').filter(a => AuthService.canAccessArea(a.id));
+    const selArea  = stopage?.areaId  || areas[0]?.id || '';
+    const subs     = DataService.getAll('subareas').filter(s => s.areaId === selArea);
+    const selSub   = stopage?.subareaId || subs[0]?.id || '';
+    const machs    = DataService.getAll('machines').filter(m => m.subareaId === selSub);
+    const reasons  = DataService.getAll('stopReasons').filter(r => r.active !== false);
+    const now      = new Date().toISOString().slice(0,16);
 
     title.textContent = id ? 'Editar Parada' : 'Nueva Parada';
 
-    const now = new Date().toISOString().slice(0,16);
-
     body.innerHTML = `
-      <form id="stopageForm">
+      <form id="stopageForm" autocomplete="off">
         <div class="form-grid">
+
           <div class="form-group">
             <label>Área *</label>
-            <select id="fmArea" class="input" required onchange="StopagesModule.formAreaChange()">
-              ${areas.map(a => `<option value="${a.id}" ${a.id===selAreaId?'selected':''}>${a.name}</option>`).join('')}
+            <select id="fmArea" class="input" required onchange="StopagesModule._formAreaChange()">
+              ${areas.map(a => `<option value="${a.id}" ${a.id===selArea?'selected':''}>${a.name}</option>`).join('')}
             </select>
           </div>
+
           <div class="form-group">
             <label>Subárea *</label>
-            <select id="fmSubarea" class="input" required onchange="StopagesModule.formSubareaChange()">
-              ${subareas.map(s => `<option value="${s.id}" ${s.id===selSubId?'selected':''}>${s.name}</option>`).join('')}
+            <select id="fmSub" class="input" required onchange="StopagesModule._formSubChange()">
+              ${subs.map(s => `<option value="${s.id}" ${s.id===selSub?'selected':''}>${s.name}</option>`).join('')}
             </select>
           </div>
+
           <div class="form-group">
             <label>Máquina *</label>
-            <select id="fmMachine" class="input" required>
-              ${machines.map(m => `<option value="${m.id}" ${m.id===stopage?.machineId?'selected':''}>${m.name}</option>`).join('')}
+            <select id="fmMach" class="input" required>
+              ${machs.map(m => `<option value="${m.id}" ${m.id===stopage?.machineId?'selected':''}>${m.name}</option>`).join('')}
             </select>
           </div>
+
           <div class="form-group">
             <label>Motivo *</label>
             <select id="fmReason" class="input" required>
               ${reasons.map(r => `<option value="${r.id}" ${r.id===stopage?.reasonId?'selected':''}>${r.name}</option>`).join('')}
             </select>
           </div>
+
           <div class="form-group full">
             <label>Descripción adicional</label>
-            <input type="text" id="fmReasonFree" class="input" value="${stopage?.reasonFree||''}" placeholder="Detalles del motivo...">
+            <input type="text" id="fmReasonFree" class="input"
+              value="${stopage?.reasonFree||''}"
+              placeholder="Detalles del motivo (opcional)">
           </div>
+
           <div class="form-group">
-            <label>Fecha/Hora Inicio ${canEditTime ? '' : '<small>(auto)</small>'}</label>
-            <input type="datetime-local" id="fmStart" class="input" value="${stopage?.startAt||now}" ${canEditTime?'':'readonly'} required>
+            <label>Fecha/Hora Inicio ${canTime?'':'<small>(solo lectura)</small>'}</label>
+            <input type="datetime-local" id="fmStart" class="input"
+              value="${stopage?.startAt || now}"
+              ${canTime?'':'readonly'} required>
           </div>
+
           <div class="form-group">
-            <label>Fecha/Hora Fin</label>
-            <input type="datetime-local" id="fmEnd" class="input" value="${stopage?.endAt||''}" ${canEditTime?'':stopage?.status==='finalizado'?'readonly':''}>
+            <label>Fecha/Hora Fin <small>(automática al finalizar)</small></label>
+            <input type="datetime-local" id="fmEnd" class="input"
+              value="${stopage?.endAt||''}"
+              ${(!canTime && stopage?.status==='finalizado')?'readonly':''}>
           </div>
+
           <div class="form-group">
             <label>Estado *</label>
-            <select id="fmStatus" class="input" ${AuthService.can('changeStatus')?'':'disabled'}>
-              <option value="pendiente" ${stopage?.status==='pendiente'?'selected':''}>Pendiente</option>
-              <option value="en_proceso" ${stopage?.status==='en_proceso'?'selected':''}>En Proceso</option>
-              <option value="finalizado" ${stopage?.status==='finalizado'?'selected':''}>Finalizado</option>
+            <select id="fmStatus" class="input" ${canStatus?'':'disabled'}>
+              <option value="pendiente"  ${stopage?.status==='pendiente'?'selected':''}>🔴 Pendiente</option>
+              <option value="en_proceso" ${stopage?.status==='en_proceso'?'selected':(!stopage?'selected':'')}>🟡 En Proceso</option>
+              <option value="finalizado" ${stopage?.status==='finalizado'?'selected':''}>🟢 Finalizado</option>
             </select>
           </div>
+
           <div class="form-group">
             <label>Responsable</label>
-            <input type="text" class="input" value="${user?.name||''}" readonly>
+            <input type="text" class="input" value="${authUser?.name||''}" readonly>
           </div>
+
           <div class="form-group full">
             <label>Notas / Observaciones</label>
-            <textarea id="fmNotes" class="input" rows="3" placeholder="Observaciones adicionales...">${stopage?.notes||''}</textarea>
+            <textarea id="fmNotes" class="input" rows="3"
+              placeholder="Descripción del problema, acciones tomadas…">${stopage?.notes||''}</textarea>
           </div>
+
         </div>
         <div class="form-actions">
           <button type="button" class="btn btn-ghost" onclick="StopagesModule.closeForm()">Cancelar</button>
-          <button type="submit" class="btn btn-primary">💾 Guardar</button>
+          <button type="submit" class="btn btn-primary">💾 Guardar Parada</button>
         </div>
-      </form>
-    `;
+      </form>`;
 
-    document.getElementById('stopageForm').addEventListener('submit', submitForm);
+    document.getElementById('stopageForm').addEventListener('submit', _submitForm);
+
+    // Show modal
     modal.style.display = 'flex';
-    modal.addEventListener('click', e => { if (e.target === modal) closeForm(); });
+    modal.addEventListener('click', e => { if (e.target === modal) closeForm(); }, { once: true });
   }
 
-  function formAreaChange() {
-    const areaId = document.getElementById('fmArea')?.value;
-    const subSel = document.getElementById('fmSubarea');
-    const subs = DataService.getAll('subareas').filter(s => s.areaId === areaId);
-    subSel.innerHTML = subs.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
-    formSubareaChange();
+  function _formAreaChange() {
+    const areaId = _val('fmArea');
+    const subs   = DataService.getAll('subareas').filter(s => s.areaId === areaId);
+    _populateSelect('fmSub', subs, null, item => `<option value="${item.id}">${item.name}</option>`);
+    _formSubChange();
   }
 
-  function formSubareaChange() {
-    const subId = document.getElementById('fmSubarea')?.value;
-    const machSel = document.getElementById('fmMachine');
-    const machs = DataService.getAll('machines').filter(m => m.subareaId === subId);
-    machSel.innerHTML = machs.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
+  function _formSubChange() {
+    const subId = _val('fmSub');
+    const machs = DataService.getAll('machines').filter(m => m.subareaId === subId && m.active !== false);
+    _populateSelect('fmMach', machs, null, item => `<option value="${item.id}">${item.name}</option>`);
   }
 
-  function submitForm(e) {
+  function _submitForm(e) {
     e.preventDefault();
-    const user = AuthService.getUser();
-    const startAt = document.getElementById('fmStart')?.value;
-    const endAt = document.getElementById('fmEnd')?.value || null;
-    const status = document.getElementById('fmStatus')?.value;
+    const user    = AuthService.getUser();
+    const startAt = _val('fmStart');
+    const endAt   = _val('fmEnd') || null;
+    const status  = _val('fmStatus') || 'pendiente';
 
-    // Auto-set endAt if finalizado and no end
-    const resolvedEnd = (status === 'finalizado' && !endAt) ? new Date().toISOString().slice(0,16) : endAt;
+    // Auto-close: if finalizado with no end, set now
+    const resolvedEnd = (status === 'finalizado' && !endAt)
+      ? new Date().toISOString().slice(0,16)
+      : endAt;
     const duration = DataService.calcDuration(startAt, resolvedEnd);
 
     const data = {
-      areaId: document.getElementById('fmArea')?.value,
-      subareaId: document.getElementById('fmSubarea')?.value,
-      machineId: document.getElementById('fmMachine')?.value,
-      reasonId: document.getElementById('fmReason')?.value,
-      reasonFree: document.getElementById('fmReasonFree')?.value || '',
+      areaId:        _val('fmArea'),
+      subareaId:     _val('fmSub'),
+      machineId:     _val('fmMach'),
+      reasonId:      _val('fmReason'),
+      reasonFree:    _val('fmReasonFree'),
       startAt,
-      endAt: resolvedEnd,
+      endAt:         resolvedEnd,
       status,
       duration,
-      notes: document.getElementById('fmNotes')?.value || '',
+      notes:         _val('fmNotes'),
       responsibleId: user.id,
     };
 
     if (editingId) {
       DataService.update('stopages', editingId, data);
-      NotificationService.showToast('Parada actualizada', 'Los cambios se guardaron correctamente', 'success');
+      NotificationService.showToast('Parada actualizada', 'Cambios guardados correctamente', 'success');
     } else {
       DataService.create('stopages', data);
-      NotificationService.showToast('Parada registrada', 'El evento se registró correctamente', 'success');
+      NotificationService.showToast('Parada registrada', 'Nuevo evento creado', 'success');
     }
 
     closeForm();
@@ -346,59 +380,129 @@ window.StopagesModule = (() => {
   }
 
   function deleteStopage(id) {
-    if (!confirm('¿Eliminar esta parada? Esta acción no se puede deshacer.')) return;
+    if (!confirm('¿Eliminar esta parada? No se puede deshacer.')) return;
     DataService.remove('stopages', id);
     NotificationService.showToast('Parada eliminada', '', 'info');
     applyFilters();
+    window.dispatchEvent(new CustomEvent('data-changed'));
   }
 
+  // ─── Export Excel ─────────────────────────────────────────────────────
   function exportExcel() {
-    if (!window.XLSX) { NotificationService.showToast('Error', 'Librería Excel no disponible', 'error'); return; }
-    const stopages = DataService.getStopages(currentFilters);
-    const rows = stopages.map(s => ({
-      'Estado': s.status,
-      'Área': DataService.getById('areas', s.areaId)?.name || '',
-      'Subárea': DataService.getById('subareas', s.subareaId)?.name || '',
-      'Máquina': DataService.getById('machines', s.machineId)?.name || '',
-      'Motivo': DataService.getById('stopReasons', s.reasonId)?.name || '',
-      'Descripción': s.reasonFree || '',
-      'Inicio': s.startAt,
-      'Fin': s.endAt || '',
-      'Duración (min)': s.duration || '',
-      'Responsable': DataService.getById('users', s.responsibleId)?.name || '',
-      'Notas': s.notes || '',
+    if (!window.XLSX) {
+      NotificationService.showToast('Error', 'Librería XLSX no cargada', 'error'); return;
+    }
+    const rows = DataService.getStopages(currentFilters).map(s => ({
+      'Estado':          s.status,
+      'Área':            DataService.getById('areas',       s.areaId)?.name || '',
+      'Subárea':         DataService.getById('subareas',    s.subareaId)?.name || '',
+      'Máquina':         DataService.getById('machines',    s.machineId)?.name || '',
+      'Cód. Máquina':    DataService.getById('machines',    s.machineId)?.code || '',
+      'Motivo':          DataService.getById('stopReasons', s.reasonId)?.name || '',
+      'Categoría':       DataService.getById('stopReasons', s.reasonId)?.category || '',
+      'Descripción':     s.reasonFree || '',
+      'Inicio':          s.startAt || '',
+      'Fin':             s.endAt || '',
+      'Duración (min)':  s.duration ?? '',
+      'Responsable':     DataService.getById('users', s.responsibleId)?.name || '',
+      'Notas':           s.notes || '',
     }));
+
     const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = Array(13).fill({ wch: 20 });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Paradas');
-    XLSX.writeFile(wb, `paradas_${new Date().toISOString().split('T')[0]}.xlsx`);
-    NotificationService.showToast('Excel exportado', '', 'success');
+    XLSX.writeFile(wb, `paradas_${_today()}.xlsx`);
+    NotificationService.showToast('Excel exportado ✅', `${rows.length} registros`, 'success');
   }
 
+  // ─── Export PDF ───────────────────────────────────────────────────────
   function exportPDF() {
-    const stopages = DataService.getStopages(currentFilters);
-    const rows = stopages.map(s => {
-      const m = DataService.getById('machines', s.machineId);
-      const a = DataService.getById('areas', s.areaId);
-      const r = DataService.getById('stopReasons', s.reasonId);
-      const u = DataService.getById('users', s.responsibleId);
-      const dur = s.duration ? `${Math.floor(s.duration/60)}h ${s.duration%60}m` : '—';
-      return [s.status, m?.name||'', a?.name||'', r?.name||'', s.startAt||'', dur, u?.name||''];
-    });
-
-    const printWin = window.open('', '_blank');
-    printWin.document.write(`
-      <html><head><title>Reporte de Paradas</title>
-      <style>body{font-family:sans-serif;padding:20px}h1{font-size:18px}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #ccc;padding:6px;text-align:left}th{background:#0a0f1e;color:#fff}tr:nth-child(even){background:#f8f8f8}</style>
-      </head><body>
-      <h1>MaintControl - Reporte de Paradas</h1>
-      <p>Generado: ${new Date().toLocaleString('es-MX')} | Total: ${stopages.length}</p>
-      <table><thead><tr><th>Estado</th><th>Máquina</th><th>Área</th><th>Motivo</th><th>Inicio</th><th>Duración</th><th>Responsable</th></tr></thead>
-      <tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>
-      </body></html>`);
-    printWin.document.close();
-    printWin.print();
+    const rows = DataService.getStopages(currentFilters);
+    const h = m => m != null ? `${Math.floor(m/60)}h ${m%60}m` : '—';
+    const win = window.open('', '_blank');
+    win.document.write(`<!DOCTYPE html><html lang="es"><head>
+      <meta charset="UTF-8">
+      <title>Reporte de Paradas — ${_today()}</title>
+      <style>
+        *{box-sizing:border-box;margin:0;padding:0}
+        body{font-family:'Segoe UI',sans-serif;font-size:11px;color:#111;padding:24px}
+        h1{font-size:18px;margin-bottom:4px;color:#0f172a}
+        .sub{color:#64748b;font-size:12px;margin-bottom:20px}
+        .kpis{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap}
+        .kpi{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:12px 16px;text-align:center;min-width:90px}
+        .kv{font-size:20px;font-weight:700;color:#0ea5e9}
+        .kl{font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+        table{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:10.5px}
+        th{background:#0f172a;color:#fff;padding:7px 9px;text-align:left;font-weight:600}
+        td{padding:6px 9px;border-bottom:1px solid #e2e8f0}
+        tr:nth-child(even) td{background:#f8fafc}
+        .footer{margin-top:20px;text-align:center;color:#94a3b8;font-size:10px;padding-top:10px;border-top:1px solid #e2e8f0}
+      </style></head><body>
+      <h1>⚙ MaintControl — Reporte de Paradas</h1>
+      <p class="sub">Generado: ${new Date().toLocaleString('es-MX')} · Total: ${rows.length} registros</p>
+      <div class="kpis">
+        <div class="kpi"><div class="kv">${rows.length}</div><div class="kl">Total</div></div>
+        <div class="kpi"><div class="kv">${rows.filter(s=>s.status==='pendiente').length}</div><div class="kl">Pendientes</div></div>
+        <div class="kpi"><div class="kv">${rows.filter(s=>s.status==='en_proceso').length}</div><div class="kl">En Proceso</div></div>
+        <div class="kpi"><div class="kv">${rows.filter(s=>s.status==='finalizado').length}</div><div class="kl">Finalizados</div></div>
+        <div class="kpi"><div class="kv">${h(rows.reduce((a,s)=>a+(s.duration||0),0))}</div><div class="kl">Tiempo Total</div></div>
+      </div>
+      <table>
+        <thead><tr><th>Fecha</th><th>Máquina</th><th>Área</th><th>Motivo</th><th>Estado</th><th>Duración</th><th>Responsable</th></tr></thead>
+        <tbody>
+          ${rows.map(s => {
+            const m = DataService.getById('machines',    s.machineId);
+            const a = DataService.getById('areas',       s.areaId);
+            const r = DataService.getById('stopReasons', s.reasonId);
+            const u = DataService.getById('users',       s.responsibleId);
+            return `<tr>
+              <td>${s.startAt?new Date(s.startAt).toLocaleDateString('es-MX'):''}</td>
+              <td>${m?.name||'—'}</td>
+              <td>${a?.name||'—'}</td>
+              <td>${r?.name||'—'}</td>
+              <td>${s.status}</td>
+              <td>${h(s.duration)}</td>
+              <td>${u?.name||'—'}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+      <div class="footer">MaintControl © ${new Date().getFullYear()}</div>
+    </body></html>`);
+    win.document.close();
+    setTimeout(() => win.print(), 400);
   }
 
-  return { render, openForm, closeForm, formAreaChange, formSubareaChange, applyFilters, clearFilters, onAreaChange, deleteStopage, exportExcel, exportPDF };
+  // ─── Helpers ─────────────────────────────────────────────────────────
+  function _val(id) {
+    return document.getElementById(id)?.value?.trim() || '';
+  }
+
+  function _fmtDT(dt) {
+    return new Date(dt).toLocaleString('es-MX', { dateStyle:'short', timeStyle:'short' });
+  }
+
+  function _today() {
+    return new Date().toISOString().split('T')[0];
+  }
+
+  function _populateSelect(id, items, placeholder, renderOpt) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const def  = placeholder ? `<option value="">${placeholder}</option>` : '';
+    const opts = renderOpt
+      ? items.map(renderOpt).join('')
+      : items.map(i => `<option value="${i.id}">${i.name}</option>`).join('');
+    el.innerHTML = def + opts;
+  }
+
+  return {
+    render, openForm, closeForm,
+    applyFilters, clearFilters,
+    onAreaChange, onSubareaChange,
+    deleteStopage, exportExcel, exportPDF,
+    // internal helpers exposed for inline onchange handlers
+    _formAreaChange, _formSubChange,
+  };
 })();
